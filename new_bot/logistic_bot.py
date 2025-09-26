@@ -1,7 +1,6 @@
 import json
 import asyncio
 import os
-import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
@@ -12,10 +11,9 @@ from aiogram.fsm.storage.memory import MemoryStorage
 # ======================
 # Config
 # ======================
-BOT_TOKEN = "8383894727:AAEM1-Z3LYhYFMUjTtMDk13F_NHyewDdKIA"
+BOT_TOKEN = "8383894727:AAEM1-Z3LYhYFMUjTtMDk13F_NHyewDdKIA"   # O'zingizni tokenni qo'yasiz
 ADMIN_ID = 7514656282
-ADMIN_USERNAME = "vodiylg"  # username, @ belgisiz
-
+ADMIN_USERNAME = "vodiylg"
 DATA_FILE = "data.json"
 
 # ======================
@@ -106,8 +104,9 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 # ======================
-# Start
+# Handlers
 # ======================
+
 @dp.message(F.text == "/start")
 async def start_cmd(message: types.Message):
     if message.from_user.id == ADMIN_ID:
@@ -115,9 +114,7 @@ async def start_cmd(message: types.Message):
     else:
         await message.answer("👋 Xush kelibsiz!\nLogistika botga hush kelibsiz!", reply_markup=client_menu())
 
-# ======================
-# Client functions
-# ======================
+# -------- Client functions --------
 @dp.message(F.text == "🔍 Partiya bo‘yicha qidirish")
 async def ask_party_code(message: types.Message, state: FSMContext):
     await message.answer("✍️ Partiya kodini kiriting (masalan: PP111):")
@@ -146,7 +143,6 @@ async def show_client_info(message: types.Message, state: FSMContext):
         await message.answer("❌ Bunday mijoz topilmadi.")
         await state.clear()
         return
-
     c = clients[code]
     party = c["party"]
     status = parties.get(party, {}).get("status", "Noma’lum")
@@ -179,9 +175,7 @@ async def help_info(message: types.Message):
         "📞 Admin bilan bog'lanish — admin bilan aloqa\n"
     )
 
-# ======================
-# Admin functions
-# ======================
+# -------- Admin functions --------
 @dp.message(F.text == "➕ Partiya qo'shish")
 async def add_party_start(message: types.Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID: return
@@ -243,7 +237,7 @@ async def update_party_status_save(message: types.Message, state: FSMContext):
     await message.answer(f"✅ {code} partiya statusi yangilandi: {status}")
     await state.clear()
 
-# --- Add Client ---
+# -------- Add Client --------
 @dp.message(F.text == "👤 Mijoz qo'shish")
 async def add_client_id(message: types.Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID: return
@@ -296,7 +290,6 @@ async def add_client_party(message: types.Message, state: FSMContext):
 async def add_client_save(message: types.Message, state: FSMContext):
     data = await state.get_data()
     code = data["client_id"]
-
     clients[code] = {
         "party": message.text.strip(),
         "mesta": data["mesta"],
@@ -310,7 +303,7 @@ async def add_client_save(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Mijoz {code} qo‘shildi.", reply_markup=admin_menu())
     await state.clear()
 
-# --- Delete Client ---
+# -------- Delete Client --------
 @dp.message(F.text == "➖ Mijozni o'chirish")
 async def delete_client_start(message: types.Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID: return
@@ -328,7 +321,7 @@ async def delete_client_save(message: types.Message, state: FSMContext):
         await message.answer("❌ Bunday mijoz topilmadi.")
     await state.clear()
 
-# --- Show all ---
+# -------- Show all --------
 @dp.message(F.text == "📋 Barcha partiyalar")
 async def all_parties_admin(message: types.Message):
     if message.from_user.id != ADMIN_ID: return
@@ -346,7 +339,6 @@ async def all_clients_admin(message: types.Message):
     if not clients:
         await message.answer("👤 Mijozlar mavjud emas.")
         return
-
     text = "📋 Barcha mijozlar:\n\n"
     for c, cdata in clients.items():
         text += (
@@ -358,30 +350,32 @@ async def all_clients_admin(message: types.Message):
             f"🛣 Joy: {cdata.get('destination')}\n"
             f"📅 Vaqt: {cdata.get('date')}\n\n"
         )
-
     await send_long_message(message.chat.id, text, bot)
 
 # ======================
-# Run
+# Run bot + dummy server (Render)
 # ======================
-async def main():
+async def run_bot():
     await dp.start_polling(bot)
 
-def run_bot():
+async def run_server():
+    PORT = int(os.environ.get("PORT", 10000))
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"✅ Bot is running on Render!")
+
+    server = HTTPServer(("0.0.0.0", PORT), Handler)
+    print(f"🌐 Dummy server running on port {PORT}")
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, server.serve_forever)
+
+async def main():
+    await asyncio.gather(
+        run_bot(),
+        run_server(),
+    )
+
+if __name__ == "__main__":
     asyncio.run(main())
-
-# Botni alohida oqimda ishga tushiramiz
-threading.Thread(target=run_bot).start()
-
-# Render uchun dummy web server
-PORT = int(os.environ.get("PORT", 10000))
-
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Bot is running on Render!")
-
-server = HTTPServer(("0.0.0.0", PORT), Handler)
-print(f"Starting dummy server on port {PORT}...")
-server.serve_forever()
