@@ -1,5 +1,8 @@
 import json
 import asyncio
+import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.fsm.state import StatesGroup, State
@@ -10,7 +13,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 # Config
 # ======================
 BOT_TOKEN = "8383894727:AAEM1-Z3LYhYFMUjTtMDk13F_NHyewDdKIA"
-ADMIN_ID = 7514656282                # faqat sizning ID
+ADMIN_ID = 7514656282
 ADMIN_USERNAME = "vodiylg"  # username, @ belgisiz
 
 DATA_FILE = "data.json"
@@ -90,10 +93,9 @@ def admin_menu():
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 # ======================
-# Helper: uzun matnni bo‘lib yuborish
+# Helper
 # ======================
 async def send_long_message(chat_id: int, text: str, bot: Bot, chunk_size: int = 3000):
-    """Matn uzun bo‘lsa 3000 belgidan bo‘lib yuboradi"""
     for i in range(0, len(text), chunk_size):
         await bot.send_message(chat_id, text[i:i+chunk_size])
 
@@ -241,9 +243,7 @@ async def update_party_status_save(message: types.Message, state: FSMContext):
     await message.answer(f"✅ {code} partiya statusi yangilandi: {status}")
     await state.clear()
 
-# ----------------------
-# Add Client (bosqichma-bosqich)
-# ----------------------
+# --- Add Client ---
 @dp.message(F.text == "👤 Mijoz qo'shish")
 async def add_client_id(message: types.Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID: return
@@ -310,9 +310,7 @@ async def add_client_save(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Mijoz {code} qo‘shildi.", reply_markup=admin_menu())
     await state.clear()
 
-# ----------------------
-# Delete Client
-# ----------------------
+# --- Delete Client ---
 @dp.message(F.text == "➖ Mijozni o'chirish")
 async def delete_client_start(message: types.Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID: return
@@ -330,9 +328,7 @@ async def delete_client_save(message: types.Message, state: FSMContext):
         await message.answer("❌ Bunday mijoz topilmadi.")
     await state.clear()
 
-# ----------------------
-# Show all parties / clients
-# ----------------------
+# --- Show all ---
 @dp.message(F.text == "📋 Barcha partiyalar")
 async def all_parties_admin(message: types.Message):
     if message.from_user.id != ADMIN_ID: return
@@ -371,5 +367,21 @@ async def all_clients_admin(message: types.Message):
 async def main():
     await dp.start_polling(bot)
 
-if __name__ == "__main__":
+def run_bot():
     asyncio.run(main())
+
+# Botni alohida oqimda ishga tushiramiz
+threading.Thread(target=run_bot).start()
+
+# Render uchun dummy web server
+PORT = int(os.environ.get("PORT", 10000))
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running on Render!")
+
+server = HTTPServer(("0.0.0.0", PORT), Handler)
+print(f"Starting dummy server on port {PORT}...")
+server.serve_forever()
