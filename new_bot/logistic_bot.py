@@ -175,7 +175,9 @@ async def help_info(message: types.Message):
         "📞 Admin bilan bog'lanish — admin bilan aloqa\n"
     )
 
-# -------- Admin functions --------
+# ======================
+# Admin functions
+# ======================
 @dp.message(F.text == "➕ Partiya qo'shish")
 async def add_party_start(message: types.Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID: return
@@ -237,7 +239,9 @@ async def update_party_status_save(message: types.Message, state: FSMContext):
     await message.answer(f"✅ {code} partiya statusi yangilandi: {status}")
     await state.clear()
 
-# -------- Add Client --------
+# ----------------------
+# Add Client (bosqichma-bosqich)
+# ----------------------
 @dp.message(F.text == "👤 Mijoz qo'shish")
 async def add_client_id(message: types.Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID: return
@@ -290,6 +294,7 @@ async def add_client_party(message: types.Message, state: FSMContext):
 async def add_client_save(message: types.Message, state: FSMContext):
     data = await state.get_data()
     code = data["client_id"]
+
     clients[code] = {
         "party": message.text.strip(),
         "mesta": data["mesta"],
@@ -303,7 +308,9 @@ async def add_client_save(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Mijoz {code} qo‘shildi.", reply_markup=admin_menu())
     await state.clear()
 
-# -------- Delete Client --------
+# ----------------------
+# Delete Client
+# ----------------------
 @dp.message(F.text == "➖ Mijozni o'chirish")
 async def delete_client_start(message: types.Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID: return
@@ -321,7 +328,9 @@ async def delete_client_save(message: types.Message, state: FSMContext):
         await message.answer("❌ Bunday mijoz topilmadi.")
     await state.clear()
 
-# -------- Show all --------
+# ----------------------
+# Show all parties / clients
+# ----------------------
 @dp.message(F.text == "📋 Barcha partiyalar")
 async def all_parties_admin(message: types.Message):
     if message.from_user.id != ADMIN_ID: return
@@ -339,6 +348,7 @@ async def all_clients_admin(message: types.Message):
     if not clients:
         await message.answer("👤 Mijozlar mavjud emas.")
         return
+
     text = "📋 Barcha mijozlar:\n\n"
     for c, cdata in clients.items():
         text += (
@@ -350,6 +360,7 @@ async def all_clients_admin(message: types.Message):
             f"🛣 Joy: {cdata.get('destination')}\n"
             f"📅 Vaqt: {cdata.get('date')}\n\n"
         )
+
     await send_long_message(message.chat.id, text, bot)
 
 # ======================
@@ -368,14 +379,13 @@ async def run_server():
 
     server = HTTPServer(("0.0.0.0", PORT), Handler)
     print(f"🌐 Dummy server running on port {PORT}")
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, server.serve_forever)
 
 async def main():
-    await asyncio.gather(
-        run_bot(),
-        run_server(),
-    )
+    task1 = asyncio.create_task(run_bot())
+    task2 = asyncio.create_task(run_server())
+    await asyncio.gather(task1, task2)
 
 if __name__ == "__main__":
     asyncio.run(main())
