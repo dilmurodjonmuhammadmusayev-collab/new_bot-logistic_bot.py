@@ -11,7 +11,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 # ======================
 # Config
 # ======================
-BOT_TOKEN = "8383894727:AAEM1-Z3LYhYFMUjTtMDk13F_NHyewDdKIA"   # O'zingizni tokenni qo'yasiz
+BOT_TOKEN = "8383894727:AAEM1-Z3LYhYFMUjTtMDk13F_NHyewDdKIA"   # tokeningizni qo'ying
 ADMIN_ID = 7514656282
 ADMIN_USERNAME = "vodiylg"
 DATA_FILE = "data.json"
@@ -175,9 +175,7 @@ async def help_info(message: types.Message):
         "📞 Admin bilan bog'lanish — admin bilan aloqa\n"
     )
 
-# ======================
-# Admin functions
-# ======================
+# -------- Admin functions --------
 @dp.message(F.text == "➕ Partiya qo'shish")
 async def add_party_start(message: types.Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID: return
@@ -239,9 +237,7 @@ async def update_party_status_save(message: types.Message, state: FSMContext):
     await message.answer(f"✅ {code} partiya statusi yangilandi: {status}")
     await state.clear()
 
-# ----------------------
-# Add Client (bosqichma-bosqich)
-# ----------------------
+# -------- Add Client --------
 @dp.message(F.text == "👤 Mijoz qo'shish")
 async def add_client_id(message: types.Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID: return
@@ -294,7 +290,6 @@ async def add_client_party(message: types.Message, state: FSMContext):
 async def add_client_save(message: types.Message, state: FSMContext):
     data = await state.get_data()
     code = data["client_id"]
-
     clients[code] = {
         "party": message.text.strip(),
         "mesta": data["mesta"],
@@ -308,9 +303,7 @@ async def add_client_save(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Mijoz {code} qo‘shildi.", reply_markup=admin_menu())
     await state.clear()
 
-# ----------------------
-# Delete Client
-# ----------------------
+# -------- Delete Client --------
 @dp.message(F.text == "➖ Mijozni o'chirish")
 async def delete_client_start(message: types.Message, state: FSMContext):
     if message.from_user.id != ADMIN_ID: return
@@ -328,9 +321,7 @@ async def delete_client_save(message: types.Message, state: FSMContext):
         await message.answer("❌ Bunday mijoz topilmadi.")
     await state.clear()
 
-# ----------------------
-# Show all parties / clients
-# ----------------------
+# -------- Show all --------
 @dp.message(F.text == "📋 Barcha partiyalar")
 async def all_parties_admin(message: types.Message):
     if message.from_user.id != ADMIN_ID: return
@@ -348,7 +339,6 @@ async def all_clients_admin(message: types.Message):
     if not clients:
         await message.answer("👤 Mijozlar mavjud emas.")
         return
-
     text = "📋 Barcha mijozlar:\n\n"
     for c, cdata in clients.items():
         text += (
@@ -360,7 +350,6 @@ async def all_clients_admin(message: types.Message):
             f"🛣 Joy: {cdata.get('destination')}\n"
             f"📅 Vaqt: {cdata.get('date')}\n\n"
         )
-
     await send_long_message(message.chat.id, text, bot)
 
 # ======================
@@ -375,7 +364,7 @@ async def run_server():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"✅ Bot is running on Render!")
+            self.wfile.write("Bot is running on Render!".encode("utf-8"))
 
     server = HTTPServer(("0.0.0.0", PORT), Handler)
     print(f"🌐 Dummy server running on port {PORT}")
