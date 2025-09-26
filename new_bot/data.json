@@ -1,8 +1,4 @@
 {
-    "PP111": {
-        "status": "Toshkentga yetib keldi"
-    },
-    "PP112": {
-        "status": "Yo‘lda"
-    }
+  "clients": {},
+  "parties": {}
 }
