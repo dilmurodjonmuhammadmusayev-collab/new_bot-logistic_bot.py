@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: logistic-bot
+    env: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python logistic_bot.py"
+    plan: free
+    autoDeploy: true
