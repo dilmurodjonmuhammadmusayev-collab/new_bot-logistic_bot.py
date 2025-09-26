@@ -2,7 +2,13 @@ services:
   - type: web
     name: logistic-bot
     env: python
-    buildCommand: "pip install -r requirements.txt"
+    buildCommand: ""
     startCommand: "python logistic_bot.py"
     plan: free
-    autoDeploy: true
+    envVars:
+      - key: BOT_TOKEN
+        value: "YOUR_TELEGRAM_BOT_TOKEN"
+      - key: ADMIN_ID
+        value: "7514656282"
+      - key: ADMIN_USERNAME
+        value: "vodiylg"
