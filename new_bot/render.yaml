@@ -7,7 +7,7 @@ services:
     plan: free
     envVars:
       - key: BOT_TOKEN
-        value: "YOUR_TELEGRAM_BOT_TOKEN"
+        value: "8383894727:AAEM1-Z3LYhYFMUjTtMDk13F_NHyewDdKIA"
       - key: ADMIN_ID
         value: "7514656282"
       - key: ADMIN_USERNAME
