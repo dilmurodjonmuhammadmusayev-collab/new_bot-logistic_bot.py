@@ -1,7 +1,13 @@
+# main.py
+# Render-da web service/worker sifatida ishlash uchun moslangan logistic bot
+# Aiogram 3.13.1 + gspread (Google service account) bilan ishlaydi.
+
+import os
 import json
 import asyncio
-import os
+import logging
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import Dict, Any
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -12,109 +18,227 @@ from aiogram.fsm.state import StatesGroup, State
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
-# ======================
-# Config
-# ======================
-BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"   # <-- Tokeningizni yozing
-ADMIN_ID = 7514656282                   # <-- O'zingizning ID
-ADMIN_USERNAME = "vodiylg"
+# ---------- Logging ----------
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("logistic-bot")
 
-SPREADSHEET_URL = "YOUR_SHEET_URL"      # <-- Google Sheet URL
+# ---------- Env / Config ----------
+# These MUST be provided as Environment Variables (Render: Environment Variables section)
+BOT_TOKEN = os.getenv("BOT_TOKEN") or ""
+ADMIN_IDS_ENV = os.getenv("ADMIN_IDS", "").strip()  # e.g. "12345,67890"
+SPREADSHEET_URL = os.getenv("SPREADSHEET_URL") or os.getenv("API_URL")  # prefer SPREADSHEET_URL, fallback API_URL
+GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")  # one-line JSON with \\n in private_key
 
-# ======================
-# Google Sheets setup
-# ======================
+if not BOT_TOKEN:
+    logger.error("BOT_TOKEN environment variable topilmadi. Iltimos BOT_TOKEN ni qo'ying.")
+    raise SystemExit("BOT_TOKEN environment variable required")
+
+if not (SPREADSHEET_URL):
+    logger.error("SPREADSHEET_URL (yoki API_URL) environment variable topilmadi.")
+    raise SystemExit("SPREADSHEET_URL (or API_URL) environment variable required")
+
+# Parse admin ids into set of strings for comparison
+ADMIN_IDS = {s.strip() for s in ADMIN_IDS_ENV.split(",") if s.strip()}
+
+# ---------- Google Sheets connection helper ----------
+def load_google_creds_from_env(env_value: str) -> Dict[str, Any]:
+    """
+    env_value expected to be a JSON string (single-line) like:
+    {"type":"service_account",...,"private_key":"-----BEGIN PRIVATE KEY-----\\nMIIE...\\n-----END PRIVATE KEY-----\\n",...}
+    json.loads will convert \\n into actual newline characters in the string.
+    """
+    if not env_value:
+        raise ValueError("GOOGLE_CREDENTIALS environment variable is empty or not provided.")
+    # Try load directly
+    try:
+        creds_dict = json.loads(env_value)
+        return creds_dict
+    except json.JSONDecodeError:
+        # Maybe the value was pasted with surrounding quotes accidentally (") or with newlines.
+        # Try some common fixes:
+        cleaned = env_value.strip()
+        # If value starts/ends with single quotes remove them
+        if cleaned.startswith("'") and cleaned.endswith("'"):
+            cleaned = cleaned[1:-1]
+        if cleaned.startswith('"') and cleaned.endswith('"'):
+            cleaned = cleaned[1:-1]
+        # Try replace literal \n escapes (if someone turned them into actual backslashes)
+        try:
+            creds_dict = json.loads(cleaned)
+            return creds_dict
+        except json.JSONDecodeError as e:
+            # As last resort try replacing actual newline characters with \n escapes then load
+            # (unlikely needed). Raise informative error.
+            raise ValueError(
+                "GOOGLE_CREDENTIALS JSON parse failed. "
+                "Ensure you pasted a valid single-line JSON with escaped newlines (\\n) in private_key."
+            ) from e
+
 def connect_sheets():
-    creds_json = os.environ.get("GOOGLE_CREDENTIALS")
+    creds_json = GOOGLE_CREDENTIALS
     if not creds_json:
         raise Exception("GOOGLE_CREDENTIALS environment variable topilmadi!")
-    creds_dict = json.loads(creds_json)
 
+    # Parse JSON from environment (this will convert \\n into real newline chars in private_key)
+    creds_dict = load_google_creds_from_env(creds_json)
+
+    # Required scopes for sheets + drive
     scopes = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     client = gspread.authorize(creds)
-    return client.open_by_url(SPREADSHEET_URL)
+    # open_by_url expects the spreadsheet URL like https://docs.google.com/spreadsheets/d/<ID>/...
+    sh = client.open_by_url(SPREADSHEET_URL)
+    return sh
+
+# ---------- Initialize Google Sheets ----------
 
 sh = connect_sheets()
-try:
-    parties_ws = sh.worksheet("parties")
-    clients_ws = sh.worksheet("clients")
-except:
-    sh.add_worksheet("parties", 1, 5)
-    sh.add_worksheet("clients", 1, 10)
-    parties_ws = sh.worksheet("parties")
-    clients_ws = sh.worksheet("clients")
-    parties_ws.append_row(["code", "status"])
-    clients_ws.append_row(["id", "party", "mesta", "kub", "kg", "destination", "date", "image"])
 
-# ======================
-# Data management
-# ======================
-def load_data():
-    global clients, parties
-    clients, parties = {}, {}
+# Ensure worksheets exist
+def ensure_worksheets():
+    try:
+        parties_ws = sh.worksheet("parties")
+        clients_ws = sh.worksheet("clients")
+    except Exception:
+        # create if not exists
+        try:
+            sh.add_worksheet("parties", 100, 10)
+        except Exception:
+            pass
+        try:
+            sh.add_worksheet("clients", 100, 20)
+        except Exception:
+            pass
+        parties_ws = sh.worksheet("parties")
+        clients_ws = sh.worksheet("clients")
+    return parties_ws, clients_ws
 
-    parties_data = parties_ws.get_all_records()
-    for row in parties_data:
-        parties[row["code"]] = {"status": row["status"]}
+parties_ws, clients_ws = ensure_worksheets()
 
-    clients_data = clients_ws.get_all_records()
-    for row in clients_data:
-        clients[row["id"]] = {
-            "party": row["party"],
-            "mesta": row["mesta"],
-            "kub": row["kub"],
-            "kg": row["kg"],
-            "destination": row["destination"],
-            "date": row["date"],
-            "image": row["image"]
-        }
+# If header is missing, initialize headers (safe)
+def ensure_headers():
+    try:
+        parties_data = parties_ws.get_all_records()
+        clients_data = clients_ws.get_all_records()
+    except Exception:
+        parties_ws.clear()
+        clients_ws.clear()
+        parties_ws.append_row(["code", "status"])
+        clients_ws.append_row(["id", "party", "mesta", "kub", "kg", "destination", "date", "image"])
+        return
 
-def save_party(code, status="Yangi"):
-    parties_ws.append_row([code, status])
-    load_data()
+    # If empty or missing keys, set headers
+    if not parties_data:
+        # check first row values
+        parties_ws.clear()
+        parties_ws.append_row(["code", "status"])
+    if not clients_data:
+        clients_ws.clear()
+        clients_ws.append_row(["id", "party", "mesta", "kub", "kg", "destination", "date", "image"])
 
-def delete_party(code):
-    data = parties_ws.get_all_records()
-    for idx, row in enumerate(data, start=2):
-        if row["code"] == code:
-            parties_ws.delete_rows(idx)
-            break
-    load_data()
+ensure_headers()
 
-def update_party_status(code, status):
-    data = parties_ws.get_all_records()
-    for idx, row in enumerate(data, start=2):
-        if row["code"] == code:
-            parties_ws.update_cell(idx, 2, status)
-            break
-    load_data()
-
-def save_client(cid, data):
-    clients_ws.append_row([
-        cid, data["party"], data["mesta"], data["kub"], data["kg"],
-        data["destination"], data["date"], data["image"]
-    ])
-    load_data()
-
-def delete_client(cid):
-    data = clients_ws.get_all_records()
-    for idx, row in enumerate(data, start=2):
-        if str(row["id"]) == str(cid):
-            clients_ws.delete_rows(idx)
-            break
-    load_data()
-
+# ---------- Data management (in-memory cache) ----------
 clients = {}
 parties = {}
+
+def load_data():
+    global clients, parties
+    clients = {}
+    parties = {}
+    try:
+        parties_data = parties_ws.get_all_records()
+        for row in parties_data:
+            key = str(row.get("code", "")).strip()
+            if not key:
+                continue
+            parties[key] = {"status": row.get("status", "")}
+    except Exception as e:
+        logger.exception("Error reading parties sheet: %s", e)
+
+    try:
+        clients_data = clients_ws.get_all_records()
+        for row in clients_data:
+            cid = str(row.get("id", "")).strip()
+            if not cid:
+                continue
+            clients[cid] = {
+                "party": row.get("party", ""),
+                "mesta": row.get("mesta", ""),
+                "kub": row.get("kub", ""),
+                "kg": row.get("kg", ""),
+                "destination": row.get("destination", ""),
+                "date": row.get("date", ""),
+                "image": row.get("image", "")
+            }
+    except Exception as e:
+        logger.exception("Error reading clients sheet: %s", e)
+
+# Initial load
 load_data()
 
-# ======================
-# FSM States
-# ======================
+# ---------- Sheets write helpers ----------
+def save_party(code, status="Yangi"):
+    try:
+        parties_ws.append_row([code, status])
+        load_data()
+    except Exception as e:
+        logger.exception("Failed to save_party: %s", e)
+
+def delete_party(code):
+    try:
+        data = parties_ws.get_all_records()
+        # find row index (data rows start at row 2 in sheet)
+        for idx, row in enumerate(data, start=2):
+            if str(row.get("code", "")) == str(code):
+                parties_ws.delete_rows(idx)
+                break
+        load_data()
+    except Exception as e:
+        logger.exception("Failed to delete_party: %s", e)
+
+def update_party_status(code, status):
+    try:
+        data = parties_ws.get_all_records()
+        for idx, row in enumerate(data, start=2):
+            if str(row.get("code", "")) == str(code):
+                parties_ws.update_cell(idx, 2, status)
+                break
+        load_data()
+    except Exception as e:
+        logger.exception("Failed to update_party_status: %s", e)
+
+def save_client(cid, data: dict):
+    try:
+        clients_ws.append_row([
+            cid,
+            data.get("party", ""),
+            data.get("mesta", ""),
+            data.get("kub", ""),
+            data.get("kg", ""),
+            data.get("destination", ""),
+            data.get("date", ""),
+            data.get("image", "")
+        ])
+        load_data()
+    except Exception as e:
+        logger.exception("Failed to save_client: %s", e)
+
+def delete_client(cid):
+    try:
+        data = clients_ws.get_all_records()
+        for idx, row in enumerate(data, start=2):
+            if str(row.get("id", "")) == str(cid):
+                clients_ws.delete_rows(idx)
+                break
+        load_data()
+    except Exception as e:
+        logger.exception("Failed to delete_client: %s", e)
+
+# ---------- FSM States ----------
 class ClientState(StatesGroup):
     waiting_party_code = State()
     waiting_client_code = State()
@@ -142,9 +266,7 @@ class UpdatePartyStatus(StatesGroup):
     waiting_code = State()
     waiting_status = State()
 
-# ======================
-# Keyboards
-# ======================
+# ---------- Keyboards ----------
 def client_menu():
     kb = [
         [KeyboardButton(text="🔍 Partiya bo‘yicha qidirish")],
@@ -164,30 +286,25 @@ def admin_menu():
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
-# ======================
-# Helper
-# ======================
+# ---------- Helper ----------
 async def send_long_message(chat_id: int, text: str, bot: Bot, chunk_size: int = 3000):
     for i in range(0, len(text), chunk_size):
         await bot.send_message(chat_id, text[i:i+chunk_size])
 
-# ======================
-# Bot & Dispatcher
-# ======================
+# ---------- Bot init ----------
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# ======================
-# Handlers
-# ======================
+# ---------- Handlers ----------
 @dp.message(F.text == "/start")
 async def start_cmd(message: types.Message):
-    if message.from_user.id == ADMIN_ID:
+    user_id_str = str(message.from_user.id)
+    if user_id_str in ADMIN_IDS:
         await message.answer("👋 Admin panelga xush kelibsiz!", reply_markup=admin_menu())
     else:
         await message.answer("👋 Xush kelibsiz!\nLogistika botga hush kelibsiz!", reply_markup=client_menu())
 
-# -------- Client functions --------
+# Client handlers
 @dp.message(F.text == "🔍 Partiya bo‘yicha qidirish")
 async def ask_party_code(message: types.Message, state: FSMContext):
     await message.answer("✍️ Partiya kodini kiriting (masalan: PP111):")
@@ -200,7 +317,7 @@ async def show_party_info(message: types.Message, state: FSMContext):
         await message.answer("❌ Bunday partiya topilmadi.\n✍️ Qayta urinib ko‘ring:")
         return
     p = parties[code]
-    text = f"📦 Partiya: {code}\n📍 Status: {p['status']}"
+    text = f"📦 Partiya: {code}\n📍 Status: {p.get('status','')}"
     await message.answer(text, reply_markup=client_menu())
     await state.clear()
 
@@ -217,7 +334,7 @@ async def show_client_info(message: types.Message, state: FSMContext):
         await state.clear()
         return
     c = clients[code]
-    party = c["party"]
+    party = c.get("party")
     status = parties.get(party, {}).get("status", "Noma’lum")
     text = (
         f"🆔 Kod: {code}\n"
@@ -230,14 +347,18 @@ async def show_client_info(message: types.Message, state: FSMContext):
         f"📅 Vaqt: {c.get('date')}\n"
     )
     if c.get("image"):
-        await message.answer_photo(c["image"], caption=text)
+        try:
+            await message.answer_photo(c.get("image"), caption=text)
+        except Exception:
+            await message.answer(text)
     else:
         await message.answer(text)
     await state.clear()
 
 @dp.message(F.text == "📞 Admin bilan bog'lanish")
 async def contact_admin(message: types.Message):
-    await message.answer(f"📩 Admin bilan bog‘lanish uchun 👉 @{ADMIN_USERNAME}")
+    # show admin contact. if you want username, set ADMIN_IDS env to include it or hardcode
+    await message.answer("📩 Admin bilan bog‘lanish uchun adminga murojaat qiling.")
 
 @dp.message(F.text == "ℹ️ Yordam")
 async def help_info(message: types.Message):
@@ -248,7 +369,7 @@ async def help_info(message: types.Message):
         "📞 Admin bilan bog'lanish — admin bilan aloqa\n"
     )
 
-# -------- Admin functions --------
+# Admin handlers
 @dp.message(F.text == "➕ Partiya qo'shish")
 async def add_party_start(message: types.Message, state: FSMContext):
     await message.answer("✍️ Yangi partiya kodini kiriting:")
@@ -385,7 +506,7 @@ async def list_parties(message: types.Message):
         return
     text = "📋 Partiyalar:\n"
     for code, data in parties.items():
-        text += f"- {code}: {data['status']}\n"
+        text += f"- {code}: {data.get('status','')}\n"
     await send_long_message(message.chat.id, text, bot)
 
 @dp.message(F.text == "📋 Barcha mijozlar")
@@ -395,17 +516,16 @@ async def list_clients(message: types.Message):
         return
     text = "📋 Mijozlar:\n"
     for cid, c in clients.items():
-        text += f"- {cid}: {c['party']}, {c['mesta']}mesta, {c['kg']}kg\n"
+        text += f"- {cid}: {c.get('party','')}, {c.get('mesta','')}mesta, {c.get('kg','')}kg\n"
     await send_long_message(message.chat.id, text, bot)
 
-# ======================
-# Run bot + dummy server (Render)
-# ======================
+# Run bot + http server for Render ping
 async def run_bot():
+    logger.info("Starting aiogram polling")
     await dp.start_polling(bot)
 
 async def run_server():
-    PORT = int(os.environ.get("PORT", 10000))
+    PORT = int(os.environ.get("PORT", "10000"))
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(200)
@@ -413,10 +533,24 @@ async def run_server():
             self.wfile.write(b"Bot is running on Render!")
     server = HTTPServer(("0.0.0.0", PORT), Handler)
     loop = asyncio.get_event_loop()
+    # run server forever in threadpool
     await loop.run_in_executor(None, server.serve_forever)
 
 async def main():
-    await asyncio.gather(run_bot(), run_server())
+    # reload data from sheets periodically in background
+    async def reload_loop():
+        while True:
+            try:
+                load_data()
+            except Exception as e:
+                logger.exception("Error loading data: %s", e)
+            await asyncio.sleep(60)  # reload each 60 seconds
+
+    await asyncio.gather(run_bot(), run_server(), reload_loop())
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Shutting down")
+
