@@ -1,14 +1,6 @@
 services:
-  - type: web
+  - type: worker
     name: logistic-bot
     env: python
-    buildCommand: ""
-    startCommand: "python logistic_bot.py"
-    plan: free
-    envVars:
-      - key: BOT_TOKEN
-        value: "8383894727:AAEM1-Z3LYhYFMUjTtMDk13F_NHyewDdKIA"
-      - key: ADMIN_ID
-        value: "7514656282"
-      - key: ADMIN_USERNAME
-        value: "vodiylg"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python logistic_bot.py
